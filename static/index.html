@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <title>Laboratoire de traduction</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { --bd:#0C2C3C; --pad:18px; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
+    h1 { margin: 0 0 10px 0; font-size: 20px; color: #0c2c3c; }
+    .box {
+      border: 6px solid var(--bd);
+      border-radius: 6px;
+      padding: var(--pad);
+      box-sizing: border-box;
+      background: #fff;
+    }
+    #prompt { width: 100%; height: 160px; font-size: 16px; }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      margin-top: 24px;
+    }
+    textarea {
+      width: 100%; height: 420px; resize: vertical; font-size: 16px;
+      border: none; outline: none;
+    }
+    .row { margin-top: 16px; display: flex; gap: 12px; align-items: center; }
+    button {
+      padding: 10px 16px; font-size: 15px; cursor: pointer;
+      border: 0; background: #0C2C3C; color: #fff; border-radius: 6px;
+    }
+    .hint { color:#4b5563; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h1>Prompt :</h1>
+    <textarea id="prompt" placeholder="Décris ton style de traduction ici (ex. neutre AFP, préserver NER, respecter unités)…"></textarea>
+    <div class="row">
+      <button id="run">Traduire</button>
+      <span class="hint">La clé OpenAI est côté serveur (dans .env, non publiée).</span>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="box">
+      <h1>Texte source :</h1>
+      <textarea id="source" placeholder="Colle ici le texte à traduire…"></textarea>
+    </div>
+    <div class="box">
+      <h1>Traduction :</h1>
+      <textarea id="target" placeholder="La traduction s'affichera ici…" readonly></textarea>
+    </div>
+  </div>
+
+  <script>
+    const btn = document.getElementById('run');
+    const promptEl = document.getElementById('prompt');
+    const sourceEl = document.getElementById('source');
+    const targetEl = document.getElementById('target');
+
+    btn.addEventListener('click', async () => {
+      targetEl.value = '… génération en cours …';
+      try {
+        const res = await fetch('/translate', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ prompt: promptEl.value, source_text: sourceEl.value })
+        });
+        const data = await res.json();
+        targetEl.value = data.translation || '(aucune sortie)';
+      } catch (e) {
+        targetEl.value = '❌ Erreur réseau';
+      }
+    });
+  </script>
+</body>
+</html>
