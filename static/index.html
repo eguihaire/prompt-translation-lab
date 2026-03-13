@@ -2,79 +2,163 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8" />
-  <title>Laboratoire de traduction</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Live Transcription (onglet Chrome)</title>
   <style>
-    :root { --bd:#0C2C3C; --pad:18px; }
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
-    h1 { margin: 0 0 10px 0; font-size: 20px; color: #0c2c3c; }
-    .box {
-      border: 6px solid var(--bd);
-      border-radius: 6px;
-      padding: var(--pad);
+    body { font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; max-width: 880px; }
+    h1 { font-size: 22px; margin-bottom: 8px; }
+    p { color: #475569; margin-top: 0; }
+    .row { display: flex; gap: 10px; align-items: center; margin: 12px 0 16px; flex-wrap: wrap; }
+    button { border: 0; border-radius: 8px; padding: 10px 14px; cursor: pointer; font-size: 14px; }
+    #start { background: #0f766e; color: #fff; }
+    #stop { background: #334155; color: #fff; }
+    #status { font-size: 13px; color: #64748b; }
+    #out {
+      width: 100%;
+      min-height: 360px;
+      border: 1px solid #cbd5e1;
+      border-radius: 10px;
+      padding: 14px;
       box-sizing: border-box;
+      white-space: pre-wrap;
+      line-height: 1.45;
       background: #fff;
     }
-    #prompt { width: 100%; height: 160px; font-size: 16px; }
-    .grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 24px;
-      margin-top: 24px;
-    }
-    textarea {
-      width: 100%; height: 420px; resize: vertical; font-size: 16px;
-      border: none; outline: none;
-    }
-    .row { margin-top: 16px; display: flex; gap: 12px; align-items: center; }
-    button {
-      padding: 10px 16px; font-size: 15px; cursor: pointer;
-      border: 0; background: #0C2C3C; color: #fff; border-radius: 6px;
-    }
-    .hint { color:#4b5563; font-size: 13px; }
+    .hint { font-size: 12px; color: #64748b; }
   </style>
 </head>
 <body>
-  <div class="box">
-    <h1>Prompt :</h1>
-    <textarea id="prompt" placeholder="Décris ton style de traduction ici (ex. neutre AFP, préserver NER, respecter unités)…"></textarea>
-    <div class="row">
-      <button id="run">Traduire</button>
-      <span class="hint">La clé OpenAI est côté serveur (dans .env, non publiée).</span>
-    </div>
+  <h1>Transcription live d'un onglet Chrome</h1>
+  <p>Ultra-simple : clique <strong>Démarrer</strong>, choisis <strong>un onglet Chrome</strong> et active <strong>Partager l'audio</strong>.</p>
+
+  <div class="row">
+    <button id="start">Démarrer</button>
+    <button id="stop" disabled>Arrêter</button>
+    <span id="status">En attente</span>
   </div>
 
-  <div class="grid">
-    <div class="box">
-      <h1>Texte source :</h1>
-      <textarea id="source" placeholder="Colle ici le texte à traduire…"></textarea>
-    </div>
-    <div class="box">
-      <h1>Traduction :</h1>
-      <textarea id="target" placeholder="La traduction s'affichera ici…" readonly></textarea>
-    </div>
-  </div>
+  <div id="out" aria-live="polite"></div>
+  <p class="hint">La clé OpenAI reste côté serveur (env Vercel: <code>OPENAI_API_KEY</code>).</p>
 
   <script>
-    const btn = document.getElementById('run');
-    const promptEl = document.getElementById('prompt');
-    const sourceEl = document.getElementById('source');
-    const targetEl = document.getElementById('target');
+    const startBtn = document.getElementById('start');
+    const stopBtn = document.getElementById('stop');
+    const statusEl = document.getElementById('status');
+    const out = document.getElementById('out');
 
-    btn.addEventListener('click', async () => {
-      targetEl.value = '… génération en cours …';
-      try {
-        const res = await fetch('/translate', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ prompt: promptEl.value, source_text: sourceEl.value })
-        });
-        const data = await res.json();
-        targetEl.value = data.translation || '(aucune sortie)';
-      } catch (e) {
-        targetEl.value = '❌ Erreur réseau';
+    let recorder;
+    let mediaStream;
+    let running = false;
+    let queue = [];
+    let inFlight = false;
+    let transcript = '';
+
+    function setStatus(text) { statusEl.textContent = text; }
+
+    async function blobToBase64(blob) {
+      const ab = await blob.arrayBuffer();
+      const bytes = new Uint8Array(ab);
+      let binary = '';
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
       }
+      return btoa(binary);
+    }
+
+    async function sendChunk(blob) {
+      const body = {
+        audio_b64: await blobToBase64(blob),
+        previous_text: transcript.slice(-500),
+        language: 'fr',
+        mime_type: blob.type || 'audio/webm'
+      };
+
+      const res = await fetch('/transcribe-chunk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Erreur transcription');
+
+      const text = (data.text || '').trim();
+      if (text) {
+        transcript += (transcript ? ' ' : '') + text;
+        out.textContent = transcript;
+        out.scrollTop = out.scrollHeight;
+      }
+    }
+
+    async function flushQueue() {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        while (queue.length) {
+          const blob = queue.shift();
+          await sendChunk(blob);
+        }
+      } catch (e) {
+        setStatus('Erreur: ' + e.message);
+      } finally {
+        inFlight = false;
+      }
+    }
+
+    async function start() {
+      transcript = '';
+      out.textContent = '';
+      queue = [];
+      setStatus('Sélection de l\'onglet...');
+
+      mediaStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: true,
+      });
+
+      const audioTracks = mediaStream.getAudioTracks();
+      if (!audioTracks.length) {
+        throw new Error('Aucune piste audio détectée. Coche "Partager l\'audio".');
+      }
+
+      const audioOnly = new MediaStream([audioTracks[0]]);
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : 'audio/webm';
+
+      recorder = new MediaRecorder(audioOnly, { mimeType });
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          queue.push(e.data);
+          flushQueue();
+        }
+      };
+      recorder.onstop = () => setStatus('Arrêté');
+
+      recorder.start(1200);
+      running = true;
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      setStatus('Transcription en direct...');
+
+      audioTracks[0].addEventListener('ended', stop);
+    }
+
+    function stop() {
+      if (!running) return;
+      running = false;
+      recorder?.stop();
+      mediaStream?.getTracks().forEach(t => t.stop());
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      setStatus('Finalisation...');
+      flushQueue().finally(() => setStatus('Terminé'));
+    }
+
+    startBtn.addEventListener('click', async () => {
+      try { await start(); } catch (e) { setStatus('Erreur: ' + e.message); }
     });
+    stopBtn.addEventListener('click', stop);
   </script>
 </body>
 </html>
