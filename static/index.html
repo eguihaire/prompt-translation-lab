@@ -46,7 +46,7 @@
     const statusEl = document.getElementById('status');
     const out = document.getElementById('out');
 
-    const CHUNK_MS = 1200;
+    const CHUNK_MS = 6000;
     const MIN_PCM_SAMPLES = 6144;
     const MIN_RMS = 0.0025;
     let mediaStream;
@@ -147,6 +147,7 @@
     async function sendChunk(chunk) {
       const body = {
         audio_b64: chunk.audio_b64,
+        previous_text: transcript.slice(-500),
         language: 'fr',
         mime_type: chunk.mime_type,
       };

@@ -54,19 +54,29 @@ async def transcribe_chunk(req: Request) -> JSONResponse:
         if len(audio_bytes) < MIN_AUDIO_BYTES:
             return JSONResponse({'text': '', 'skipped': True})
 
+        previous_text = data.get('previous_text') or ''
         language = data.get('language') or 'fr'
         mime_type = data.get('mime_type') or 'audio/wav'
 
         if mime_type == 'audio/wav' and not _looks_like_wav(audio_bytes):
             return JSONResponse({'text': '', 'skipped': True, 'warning': 'Chunk WAV invalide ignoré.'})
 
-        model = os.getenv('OPENAI_TRANSCRIBE_MODEL', 'gpt-4o-mini-transcribe')
+        model = os.getenv("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-transcribe")
+
+        prompt = (
+            "This is a live transcription of a French news or journalism audio stream. "
+            "Preserve names, acronyms, numbers, places, and punctuation accurately. "
+            "Keep formatting clean and readable. "
+            + (previous_text[-400:] if previous_text else "")
+        )
+
         filename = 'chunk.wav' if mime_type == 'audio/wav' else 'chunk.webm'
 
         transcription = _openai_client().audio.transcriptions.create(
             model=model,
             file=(filename, io.BytesIO(audio_bytes), mime_type),
             language=language,
+            prompt=prompt,
         )
 
         text = (getattr(transcription, 'text', '') or '').strip()

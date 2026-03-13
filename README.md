@@ -6,7 +6,7 @@ Cette app FastAPI capture l'audio d'un onglet Chrome côté navigateur, envoie d
 
 - **Simple** : 1 backend FastAPI + 1 page HTML/JS.
 - **Robuste** : la clé API OpenAI reste **uniquement côté serveur**.
-- **Faible latence** : envoi de chunks audio toutes ~1.2 secondes avec filtrage anti-silence.
+- **Faible latence** : envoi de chunks audio toutes ~6 secondes avec filtrage anti-silence.
 - **Robuste côté format audio** : chunks encodés en WAV PCM (évite les erreurs de conteneur WebM partiel).
 - **Compatible Vercel** : déploiement serverless Python direct.
 
@@ -15,7 +15,7 @@ Cette app FastAPI capture l'audio d'un onglet Chrome côté navigateur, envoie d
 Sur Vercel (Project Settings → Environment Variables) :
 
 - `OPENAI_API_KEY` (**obligatoire**)
-- `OPENAI_TRANSCRIBE_MODEL` (optionnel, défaut: `gpt-4o-mini-transcribe`)
+- `OPENAI_TRANSCRIBE_MODEL` (optionnel, défaut: `gpt-4o-transcribe`)
 - `OPENAI_BASE_URL` (optionnel, si proxy/API compatible)
 
 En local, vous pouvez utiliser un `.env`.
