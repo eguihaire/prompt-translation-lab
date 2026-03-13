@@ -25,6 +25,10 @@
       background: #fff;
     }
     .hint { font-size: 12px; color: #64748b; }
+    .log-wrap { margin-top: 12px; }
+    details { border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px 10px; background: #f8fafc; }
+    details summary { cursor: pointer; color: #334155; font-size: 13px; }
+    #logs { margin-top: 8px; max-height: 160px; overflow: auto; font-size: 12px; color: #475569; white-space: pre-wrap; }
   </style>
 </head>
 <body>
@@ -33,18 +37,26 @@
 
   <div class="row">
     <button id="start">Démarrer</button>
-    <button id="stop" disabled>Arrêter</button>
+    <button id="stop" type="button" aria-label="Arrêter la transcription" disabled>Arrêter</button>
     <span id="status">En attente</span>
   </div>
 
   <div id="out" aria-live="polite"></div>
   <p class="hint">La clé OpenAI reste côté serveur (env Vercel: <code>OPENAI_API_KEY</code>).</p>
 
+  <div class="log-wrap">
+    <details id="logDetails">
+      <summary>Afficher les logs (optionnel)</summary>
+      <div id="logs"></div>
+    </details>
+  </div>
+
   <script>
     const startBtn = document.getElementById('start');
     const stopBtn = document.getElementById('stop');
     const statusEl = document.getElementById('status');
     const out = document.getElementById('out');
+    const logsEl = document.getElementById('logs');
 
     const CHUNK_MS = 3500;
     const OVERLAP_MS = 900;
@@ -65,6 +77,12 @@
     let overlapSamples = new Float32Array(0);
 
     function setStatus(text) { statusEl.textContent = text; }
+
+    function addLog(text) {
+      const time = new Date().toLocaleTimeString('fr-FR');
+      logsEl.textContent += `[${time}] ${text}\n`;
+      logsEl.scrollTop = logsEl.scrollHeight;
+    }
 
     function floatTo16BitPCM(float32Array) {
       const pcm = new Int16Array(float32Array.length);
@@ -173,6 +191,7 @@
 
       if (data.warning) {
         setStatus(data.warning + ' — transcription en direct...');
+        addLog('warning: ' + data.warning);
       } else {
         setStatus('Transcription en direct...');
       }
@@ -195,6 +214,7 @@
         }
       } catch (e) {
         setStatus('Erreur: ' + e.message);
+        addLog('erreur: ' + e.message);
       } finally {
         inFlight = false;
       }
@@ -207,6 +227,8 @@
       pendingSamples = [];
       overlapSamples = new Float32Array(0);
       setStatus('Sélection de l\'onglet...');
+      logsEl.textContent = '';
+      addLog('Démarrage de la capture');
 
       mediaStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
       const audioTracks = mediaStream.getAudioTracks();
@@ -238,6 +260,7 @@
       startBtn.disabled = true;
       stopBtn.disabled = false;
       setStatus('Transcription en direct...');
+      addLog('Transcription démarrée');
 
       audioTracks[0].addEventListener('ended', stop);
     }
@@ -265,12 +288,16 @@
       if (!running) return;
       running = false;
       setStatus('Finalisation...');
+      addLog('Arrêt demandé');
       cleanupAudioGraph();
       flushPcmChunk();
 
       startBtn.disabled = false;
       stopBtn.disabled = true;
-      flushQueue().finally(() => setStatus('Terminé'));
+      flushQueue().finally(() => {
+        setStatus('Terminé');
+        addLog('Transcription arrêtée');
+      });
     }
 
     startBtn.addEventListener('click', async () => {
@@ -279,6 +306,7 @@
       } catch (e) {
         cleanupAudioGraph();
         setStatus('Erreur: ' + e.message);
+        addLog('erreur au démarrage: ' + e.message);
       }
     });
     stopBtn.addEventListener('click', stop);
