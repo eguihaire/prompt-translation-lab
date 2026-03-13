@@ -1,6 +1,7 @@
 import base64
 import io
 import os
+import re
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -24,6 +25,25 @@ def _looks_like_wav(audio_bytes: bytes) -> bool:
         return False
     return audio_bytes[:4] == b'RIFF' and audio_bytes[8:12] == b'WAVE'
 
+
+
+
+def _post_process_transcript(text: str, previous_text: str) -> str:
+    text = (text or '').strip()
+    if not text:
+        return ''
+
+    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r'\s+([,.;:!?])', r'\1', text)
+
+    should_capitalize = not previous_text or previous_text.rstrip().endswith(('.', '!', '?'))
+    if should_capitalize:
+        for i, ch in enumerate(text):
+            if ch.isalpha():
+                text = text[:i] + ch.upper() + text[i + 1:]
+                break
+
+    return text
 
 def _openai_client() -> OpenAI:
     api_key = os.getenv('OPENAI_API_KEY')
@@ -63,11 +83,14 @@ async def transcribe_chunk(req: Request) -> JSONResponse:
 
         model = os.getenv("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-transcribe")
 
+        rolling_context = previous_text[-400:] if previous_text else ""
         prompt = (
-            "This is a live transcription of a French news or journalism audio stream. "
-            "Preserve names, acronyms, numbers, places, and punctuation accurately. "
-            "Keep formatting clean and readable. "
-            + (previous_text[-400:] if previous_text else "")
+            "Transcription française fidèle, mot à mot. "
+            "N'ajoute rien, ne résume pas, ne reformule pas. "
+            "Conserve strictement les noms propres, acronymes, nombres, lieux et citations. "
+            "Soigne la ponctuation et la casse sans modifier le sens. "
+            "Contexte précédent (verbatim): "
+            + rolling_context
         )
 
         filename = 'chunk.wav' if mime_type == 'audio/wav' else 'chunk.webm'
@@ -79,7 +102,8 @@ async def transcribe_chunk(req: Request) -> JSONResponse:
             prompt=prompt,
         )
 
-        text = (getattr(transcription, 'text', '') or '').strip()
+        raw_text = (getattr(transcription, 'text', '') or '').strip()
+        text = _post_process_transcript(raw_text, previous_text)
         return JSONResponse({'text': text, 'skipped': False})
     except BadRequestError as exc:
         body = getattr(exc, 'body', None)

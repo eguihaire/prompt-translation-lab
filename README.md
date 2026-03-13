@@ -6,7 +6,7 @@ Cette app FastAPI capture l'audio d'un onglet Chrome côté navigateur, envoie d
 
 - **Simple** : 1 backend FastAPI + 1 page HTML/JS.
 - **Robuste** : la clé API OpenAI reste **uniquement côté serveur**.
-- **Faible latence** : envoi de chunks audio toutes ~6 secondes avec filtrage anti-silence.
+- **Faible latence** : envoi de chunks audio toutes ~3.5 secondes avec filtrage anti-silence.
 - **Robuste côté format audio** : chunks encodés en WAV PCM (évite les erreurs de conteneur WebM partiel).
 - **Compatible Vercel** : déploiement serverless Python direct.
 
@@ -53,6 +53,7 @@ Vercel utilise `vercel.json` pour router toutes les requêtes vers `app.py`.
 - Sans audio partagé, aucune transcription ne remonte.
 - En cas de micro-chunk invalide en fin de capture, le serveur l'ignore automatiquement pour ne pas stopper la session.
 - Le client ignore les segments quasi silencieux pour éviter les erreurs `invalid_value` sur des chunks vides.
+- Les chunks incluent un léger chevauchement audio (overlap) pour améliorer la continuité entre segments.
 - Le backend valide rapidement les en-têtes WAV et ignore les chunks corrompus avant appel OpenAI.
 - Pour encore moins de latence, un pipeline WebSocket/Realtimes peut aller plus loin, mais est plus complexe.
 

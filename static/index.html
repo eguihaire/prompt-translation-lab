@@ -46,9 +46,10 @@
     const statusEl = document.getElementById('status');
     const out = document.getElementById('out');
 
-    const CHUNK_MS = 6000;
-    const MIN_PCM_SAMPLES = 6144;
-    const MIN_RMS = 0.0025;
+    const CHUNK_MS = 3500;
+    const OVERLAP_MS = 900;
+    const MIN_PCM_SAMPLES = 4096;
+    const MIN_RMS = 0.0015;
     let mediaStream;
     let audioContext;
     let sourceNode;
@@ -61,6 +62,7 @@
     let transcript = '';
     let sampleRate = 48000;
     let pendingSamples = [];
+    let overlapSamples = new Float32Array(0);
 
     function setStatus(text) { statusEl.textContent = text; }
 
@@ -134,7 +136,16 @@
       const rms = Math.sqrt(sumSquares / joined.length);
       if (rms < MIN_RMS) return;
 
-      const pcm = floatTo16BitPCM(joined);
+      const previousOverlap = overlapSamples;
+      const withOverlap = new Float32Array(previousOverlap.length + joined.length);
+      withOverlap.set(previousOverlap, 0);
+      withOverlap.set(joined, previousOverlap.length);
+
+      const overlapCount = Math.max(1, Math.floor(sampleRate * (OVERLAP_MS / 1000)));
+      const overlapStart = Math.max(0, joined.length - overlapCount);
+      overlapSamples = joined.slice(overlapStart);
+
+      const pcm = floatTo16BitPCM(withOverlap);
       const wavBytes = pcmToWavBytes(pcm, sampleRate);
 
       queue.push({
@@ -147,7 +158,7 @@
     async function sendChunk(chunk) {
       const body = {
         audio_b64: chunk.audio_b64,
-        previous_text: transcript.slice(-500),
+        previous_text: transcript.slice(-2000),
         language: 'fr',
         mime_type: chunk.mime_type,
       };
@@ -194,6 +205,7 @@
       out.textContent = '';
       queue = [];
       pendingSamples = [];
+      overlapSamples = new Float32Array(0);
       setStatus('Sélection de l\'onglet...');
 
       mediaStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
