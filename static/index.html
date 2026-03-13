@@ -125,6 +125,31 @@
       return new Uint8Array(buffer);
     }
 
+
+    function mergeChunkText(existing, incoming) {
+      const cleanIncoming = (incoming || '').trim();
+      if (!cleanIncoming) return existing;
+      if (!existing) return cleanIncoming;
+
+      const existingWords = existing.split(/\s+/);
+      const incomingWords = cleanIncoming.split(/\s+/);
+      const maxOverlap = Math.min(10, existingWords.length, incomingWords.length);
+
+      let overlap = 0;
+      for (let n = maxOverlap; n >= 1; n -= 1) {
+        const tail = existingWords.slice(-n).join(' ').toLowerCase();
+        const head = incomingWords.slice(0, n).join(' ').toLowerCase();
+        if (tail === head) {
+          overlap = n;
+          break;
+        }
+      }
+
+      const merged = overlap > 0 ? incomingWords.slice(overlap).join(' ') : cleanIncoming;
+      if (!merged) return existing;
+      return `${existing} ${merged}`.trim();
+    }
+
     function bytesToBase64(bytes) {
       let binary = '';
       const step = 0x8000;
@@ -198,7 +223,7 @@
 
       const text = (data.text || '').trim();
       if (text) {
-        transcript += (transcript ? ' ' : '') + text;
+        transcript = mergeChunkText(transcript, text);
         out.textContent = transcript;
         out.scrollTop = out.scrollHeight;
       }

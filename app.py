@@ -88,7 +88,8 @@ async def transcribe_chunk(req: Request) -> JSONResponse:
             "Transcription française fidèle, mot à mot. "
             "N'ajoute rien, ne résume pas, ne reformule pas. "
             "Conserve strictement les noms propres, acronymes, nombres, lieux et citations. "
-            "Soigne la ponctuation et la casse sans modifier le sens. "
+            "Améliore la ponctuation et la casse uniquement, sans changer les mots prononcés. "
+            "Assure une bonne continuité entre segments consécutifs; n'invente pas de mots absents de l'audio. "
             "Contexte précédent (verbatim): "
             + rolling_context
         )
