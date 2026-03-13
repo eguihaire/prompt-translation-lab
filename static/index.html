@@ -2,79 +2,273 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8" />
-  <title>Laboratoire de traduction</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Live Transcription (onglet Chrome)</title>
   <style>
-    :root { --bd:#0C2C3C; --pad:18px; }
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
-    h1 { margin: 0 0 10px 0; font-size: 20px; color: #0c2c3c; }
-    .box {
-      border: 6px solid var(--bd);
-      border-radius: 6px;
-      padding: var(--pad);
+    body { font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; max-width: 880px; }
+    h1 { font-size: 22px; margin-bottom: 8px; }
+    p { color: #475569; margin-top: 0; }
+    .row { display: flex; gap: 10px; align-items: center; margin: 12px 0 16px; flex-wrap: wrap; }
+    button { border: 0; border-radius: 8px; padding: 10px 14px; cursor: pointer; font-size: 14px; }
+    #start { background: #0f766e; color: #fff; }
+    #stop { background: #334155; color: #fff; }
+    #status { font-size: 13px; color: #64748b; }
+    #out {
+      width: 100%;
+      min-height: 360px;
+      border: 1px solid #cbd5e1;
+      border-radius: 10px;
+      padding: 14px;
       box-sizing: border-box;
+      white-space: pre-wrap;
+      line-height: 1.45;
       background: #fff;
     }
-    #prompt { width: 100%; height: 160px; font-size: 16px; }
-    .grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 24px;
-      margin-top: 24px;
-    }
-    textarea {
-      width: 100%; height: 420px; resize: vertical; font-size: 16px;
-      border: none; outline: none;
-    }
-    .row { margin-top: 16px; display: flex; gap: 12px; align-items: center; }
-    button {
-      padding: 10px 16px; font-size: 15px; cursor: pointer;
-      border: 0; background: #0C2C3C; color: #fff; border-radius: 6px;
-    }
-    .hint { color:#4b5563; font-size: 13px; }
+    .hint { font-size: 12px; color: #64748b; }
   </style>
 </head>
 <body>
-  <div class="box">
-    <h1>Prompt :</h1>
-    <textarea id="prompt" placeholder="Décris ton style de traduction ici (ex. neutre AFP, préserver NER, respecter unités)…"></textarea>
-    <div class="row">
-      <button id="run">Traduire</button>
-      <span class="hint">La clé OpenAI est côté serveur (dans .env, non publiée).</span>
-    </div>
+  <h1>Transcription live d'un onglet Chrome</h1>
+  <p>Ultra-simple : clique <strong>Démarrer</strong>, choisis <strong>un onglet Chrome</strong> et active <strong>Partager l'audio</strong>.</p>
+
+  <div class="row">
+    <button id="start">Démarrer</button>
+    <button id="stop" disabled>Arrêter</button>
+    <span id="status">En attente</span>
   </div>
 
-  <div class="grid">
-    <div class="box">
-      <h1>Texte source :</h1>
-      <textarea id="source" placeholder="Colle ici le texte à traduire…"></textarea>
-    </div>
-    <div class="box">
-      <h1>Traduction :</h1>
-      <textarea id="target" placeholder="La traduction s'affichera ici…" readonly></textarea>
-    </div>
-  </div>
+  <div id="out" aria-live="polite"></div>
+  <p class="hint">La clé OpenAI reste côté serveur (env Vercel: <code>OPENAI_API_KEY</code>).</p>
 
   <script>
-    const btn = document.getElementById('run');
-    const promptEl = document.getElementById('prompt');
-    const sourceEl = document.getElementById('source');
-    const targetEl = document.getElementById('target');
+    const startBtn = document.getElementById('start');
+    const stopBtn = document.getElementById('stop');
+    const statusEl = document.getElementById('status');
+    const out = document.getElementById('out');
 
-    btn.addEventListener('click', async () => {
-      targetEl.value = '… génération en cours …';
+    const CHUNK_MS = 1200;
+    const MIN_PCM_SAMPLES = 6144;
+    const MIN_RMS = 0.0025;
+    let mediaStream;
+    let audioContext;
+    let sourceNode;
+    let processorNode;
+    let flushTimer;
+
+    let running = false;
+    let queue = [];
+    let inFlight = false;
+    let transcript = '';
+    let sampleRate = 48000;
+    let pendingSamples = [];
+
+    function setStatus(text) { statusEl.textContent = text; }
+
+    function floatTo16BitPCM(float32Array) {
+      const pcm = new Int16Array(float32Array.length);
+      for (let i = 0; i < float32Array.length; i += 1) {
+        const s = Math.max(-1, Math.min(1, float32Array[i]));
+        pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      }
+      return pcm;
+    }
+
+    function pcmToWavBytes(int16Data, wavSampleRate) {
+      const byteLength = int16Data.length * 2;
+      const buffer = new ArrayBuffer(44 + byteLength);
+      const view = new DataView(buffer);
+
+      function writeString(offset, str) {
+        for (let i = 0; i < str.length; i += 1) view.setUint8(offset + i, str.charCodeAt(i));
+      }
+
+      writeString(0, 'RIFF');
+      view.setUint32(4, 36 + byteLength, true);
+      writeString(8, 'WAVE');
+      writeString(12, 'fmt ');
+      view.setUint32(16, 16, true); // PCM chunk size
+      view.setUint16(20, 1, true); // PCM format
+      view.setUint16(22, 1, true); // mono
+      view.setUint32(24, wavSampleRate, true);
+      view.setUint32(28, wavSampleRate * 2, true);
+      view.setUint16(32, 2, true);
+      view.setUint16(34, 16, true);
+      writeString(36, 'data');
+      view.setUint32(40, byteLength, true);
+
+      let offset = 44;
+      for (let i = 0; i < int16Data.length; i += 1) {
+        view.setInt16(offset, int16Data[i], true);
+        offset += 2;
+      }
+
+      return new Uint8Array(buffer);
+    }
+
+    function bytesToBase64(bytes) {
+      let binary = '';
+      const step = 0x8000;
+      for (let i = 0; i < bytes.length; i += step) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + step));
+      }
+      return btoa(binary);
+    }
+
+    function flushPcmChunk() {
+      if (!pendingSamples.length) return;
+
+      let total = 0;
+      for (const s of pendingSamples) total += s.length;
+      const joined = new Float32Array(total);
+      let cursor = 0;
+      for (const s of pendingSamples) {
+        joined.set(s, cursor);
+        cursor += s.length;
+      }
+      pendingSamples = [];
+
+      if (joined.length < MIN_PCM_SAMPLES) return;
+
+      let sumSquares = 0;
+      for (let i = 0; i < joined.length; i += 1) sumSquares += joined[i] * joined[i];
+      const rms = Math.sqrt(sumSquares / joined.length);
+      if (rms < MIN_RMS) return;
+
+      const pcm = floatTo16BitPCM(joined);
+      const wavBytes = pcmToWavBytes(pcm, sampleRate);
+
+      queue.push({
+        audio_b64: bytesToBase64(wavBytes),
+        mime_type: 'audio/wav',
+      });
+      flushQueue();
+    }
+
+    async function sendChunk(chunk) {
+      const body = {
+        audio_b64: chunk.audio_b64,
+        language: 'fr',
+        mime_type: chunk.mime_type,
+      };
+
+      const res = await fetch('/transcribe-chunk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Erreur transcription');
+
+      if (data.warning) {
+        setStatus(data.warning + ' — transcription en direct...');
+      } else {
+        setStatus('Transcription en direct...');
+      }
+
+      const text = (data.text || '').trim();
+      if (text) {
+        transcript += (transcript ? ' ' : '') + text;
+        out.textContent = transcript;
+        out.scrollTop = out.scrollHeight;
+      }
+    }
+
+    async function flushQueue() {
+      if (inFlight) return;
+      inFlight = true;
       try {
-        const res = await fetch('/translate', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ prompt: promptEl.value, source_text: sourceEl.value })
-        });
-        const data = await res.json();
-        targetEl.value = data.translation || '(aucune sortie)';
+        while (queue.length) {
+          const chunk = queue.shift();
+          await sendChunk(chunk);
+        }
       } catch (e) {
-        targetEl.value = '❌ Erreur réseau';
+        setStatus('Erreur: ' + e.message);
+      } finally {
+        inFlight = false;
+      }
+    }
+
+    async function start() {
+      transcript = '';
+      out.textContent = '';
+      queue = [];
+      pendingSamples = [];
+      setStatus('Sélection de l\'onglet...');
+
+      mediaStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      const audioTracks = mediaStream.getAudioTracks();
+      if (!audioTracks.length) {
+        throw new Error('Aucune piste audio détectée. Coche "Partager l\'audio".');
+      }
+
+      const audioOnly = new MediaStream([audioTracks[0]]);
+      audioContext = new AudioContext();
+      sampleRate = audioContext.sampleRate;
+      sourceNode = audioContext.createMediaStreamSource(audioOnly);
+      processorNode = audioContext.createScriptProcessor(4096, 1, 1);
+
+      processorNode.onaudioprocess = (event) => {
+        if (!running) return;
+        const ch0 = event.inputBuffer.getChannelData(0);
+        pendingSamples.push(new Float32Array(ch0));
+      };
+
+      sourceNode.connect(processorNode);
+      const silentGain = audioContext.createGain();
+      silentGain.gain.value = 0;
+      processorNode.connect(silentGain);
+      silentGain.connect(audioContext.destination);
+
+      flushTimer = setInterval(flushPcmChunk, CHUNK_MS);
+
+      running = true;
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      setStatus('Transcription en direct...');
+
+      audioTracks[0].addEventListener('ended', stop);
+    }
+
+    function cleanupAudioGraph() {
+      if (flushTimer) {
+        clearInterval(flushTimer);
+        flushTimer = undefined;
+      }
+      processorNode?.disconnect();
+      sourceNode?.disconnect();
+      processorNode = undefined;
+      sourceNode = undefined;
+
+      if (audioContext && audioContext.state !== 'closed') {
+        audioContext.close();
+      }
+      audioContext = undefined;
+
+      mediaStream?.getTracks().forEach((t) => t.stop());
+      mediaStream = undefined;
+    }
+
+    function stop() {
+      if (!running) return;
+      running = false;
+      setStatus('Finalisation...');
+      cleanupAudioGraph();
+      flushPcmChunk();
+
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      flushQueue().finally(() => setStatus('Terminé'));
+    }
+
+    startBtn.addEventListener('click', async () => {
+      try {
+        await start();
+      } catch (e) {
+        cleanupAudioGraph();
+        setStatus('Erreur: ' + e.message);
       }
     });
+    stopBtn.addEventListener('click', stop);
   </script>
 </body>
 </html>
