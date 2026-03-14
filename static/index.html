@@ -59,8 +59,7 @@
     let running = false;
     let queue = [];
     let inFlight = false;
-    let stableText = '';
-    let currentBuffer = '';
+    let transcript = '';
     let sampleRate = 48000;
     let pendingSamples = [];
     let overlapSamples = new Float32Array(0);
@@ -136,69 +135,6 @@
       return `${existing} ${merged}`.trim();
     }
 
-    function cleanPunctuationAndCase(text) {
-      let outText = (text || '').trim();
-      if (!outText) return '';
-
-      outText = outText.replace(/\s+/g, ' ');
-      outText = outText.replace(/\s+([,.;:!?])/g, '$1');
-
-      const chars = outText.split('');
-      let capitalizeNext = true;
-      for (let i = 0; i < chars.length; i += 1) {
-        const ch = chars[i];
-        if (capitalizeNext && /[a-zà-ÿ]/i.test(ch)) {
-          chars[i] = ch.toLocaleUpperCase('fr-FR');
-          capitalizeNext = false;
-        }
-        if (/[.!?]/.test(ch)) capitalizeNext = true;
-      }
-      return chars.join('');
-    }
-
-    function splitStableAndTail(text, forceFinalize = false) {
-      const src = (text || '').trim();
-      if (!src) return { stablePart: '', tailPart: '' };
-
-      const sentenceRegex = /[^.!?]+(?:[.!?]+["'»”)]*)/g;
-      const matches = [...src.matchAll(sentenceRegex)];
-
-      if (!matches.length) return { stablePart: '', tailPart: src };
-
-      const lastMatch = matches[matches.length - 1];
-      const consumedUntil = lastMatch.index + lastMatch[0].length;
-      const trailing = src.slice(consumedUntil).trim();
-
-      if (forceFinalize) {
-        const all = (matches.map((m) => m[0]).join(' ') + (trailing ? ` ${trailing}` : '')).trim();
-        return { stablePart: all, tailPart: '' };
-      }
-
-      if (matches.length === 1 && !trailing) {
-        return { stablePart: '', tailPart: src };
-      }
-
-      const stableSentences = matches.slice(0, -1).map((m) => m[0]).join(' ').trim();
-      const lastSentence = matches[matches.length - 1][0].trim();
-      const tailPart = (lastSentence + (trailing ? ` ${trailing}` : '')).trim();
-      return { stablePart: stableSentences, tailPart };
-    }
-
-    function maybeStabilize(forceFinalize = false) {
-      const { stablePart, tailPart } = splitStableAndTail(currentBuffer, forceFinalize);
-      if (stablePart) {
-        const corrected = cleanPunctuationAndCase(stablePart);
-        stableText = stableText ? `${stableText} ${corrected}`.trim() : corrected;
-      }
-      currentBuffer = tailPart || '';
-    }
-
-    function renderTranscript() {
-      const liveText = [stableText, currentBuffer].filter(Boolean).join(' ').trim();
-      out.textContent = liveText;
-      out.scrollTop = out.scrollHeight;
-    }
-
     function bytesToBase64(bytes) {
       let binary = '';
       const step = 0x8000;
@@ -250,7 +186,7 @@
     async function sendChunk(chunk) {
       const body = {
         audio_b64: chunk.audio_b64,
-        previous_text: [stableText, currentBuffer].filter(Boolean).join(' ').slice(-2000),
+        previous_text: transcript.slice(-2000),
         language: 'fr',
         mime_type: chunk.mime_type,
       };
@@ -272,10 +208,10 @@
 
       const text = (data.text || '').trim();
       if (text) {
-        currentBuffer = mergeChunkText(currentBuffer, text);
-        maybeStabilize(false);
+        transcript = mergeChunkText(transcript, text);
+        out.textContent = transcript;
+        out.scrollTop = out.scrollHeight;
       }
-      renderTranscript();
     }
 
     async function flushQueue() {
@@ -295,8 +231,7 @@
     }
 
     async function start() {
-      stableText = '';
-      currentBuffer = '';
+      transcript = '';
       out.textContent = '';
       queue = [];
       pendingSamples = [];
@@ -369,8 +304,6 @@
       startBtn.disabled = false;
       stopBtn.disabled = true;
       flushQueue().finally(() => {
-        maybeStabilize(true);
-        renderTranscript();
         setStatus('Terminé');
         addLog('Transcription arrêtée');
       });
