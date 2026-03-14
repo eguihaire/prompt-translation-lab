@@ -1,21 +1,21 @@
-# Mini app — Transcription live d'un onglet Chrome (OpenAI + Vercel)
+# Super Scribe V1 — Transcription live d'un onglet Chrome (ElevenLabs Realtime STT + Vercel)
 
-Cette app FastAPI capture l'audio d'un onglet Chrome côté navigateur, envoie des micro-chunks audio au serveur, puis transcrit en quasi temps réel avec l'API OpenAI.
+Cette app FastAPI capture l'audio d'un onglet Chrome côté navigateur, envoie des micro-chunks audio au serveur via WebSocket, puis transcrit en quasi temps réel avec l'API Realtime Speech-to-Text d'ElevenLabs.
 
 ## Pourquoi cette architecture
 
 - **Simple** : 1 backend FastAPI + 1 page HTML/JS.
-- **Robuste** : la clé API OpenAI reste **uniquement côté serveur**.
-- **Faible latence** : envoi de chunks audio toutes ~1.2 secondes.
+- **Sécurisée** : la clé ElevenLabs reste **uniquement côté serveur**.
+- **Faible latence** : envoi fréquent de chunks audio et affichage live.
 - **Compatible Vercel** : déploiement serverless Python direct.
 
 ## Variables d'environnement
 
 Sur Vercel (Project Settings → Environment Variables) :
 
-- `OPENAI_API_KEY` (**obligatoire**)
-- `OPENAI_TRANSCRIBE_MODEL` (optionnel, défaut: `gpt-4o-mini-transcribe`)
-- `OPENAI_BASE_URL` (optionnel, si proxy/API compatible)
+- `ELEVENLABS_API_KEY` (**obligatoire**)
+- `ELEVENLABS_STT_MODEL_ID` (optionnel, défaut: `scribe_v1`)
+- `ELEVENLABS_REALTIME_WS_URL` (optionnel, défaut: `wss://api.elevenlabs.io/v1/speech-to-text/realtime`)
 
 En local, vous pouvez utiliser un `.env`.
 
@@ -41,7 +41,7 @@ Vercel utilise `vercel.json` pour router toutes les requêtes vers `app.py`.
 
 ## Usage
 
-1. Cliquer **Démarrer**.
+1. Cliquer **Start**.
 2. Dans le sélecteur Chrome, choisir l'onglet à transcrire.
 3. **Cocher "Partager l'audio"**.
 4. Lire le flux transcrit en direct.
@@ -50,24 +50,4 @@ Vercel utilise `vercel.json` pour router toutes les requêtes vers `app.py`.
 
 - Chrome impose l'UI native de partage d'écran/onglet.
 - Sans audio partagé, aucune transcription ne remonte.
-- Pour encore moins de latence, un pipeline WebSocket/Realtimes peut aller plus loin, mais est plus complexe.
-
-
-## Publier dans votre repo GitHub `eguihaire/transcription-live`
-
-Depuis ce projet local :
-
-```bash
-git remote add origin https://github.com/eguihaire/transcription-live.git
-git branch -M main
-git push -u origin main
-```
-
-Si `origin` existe déjà :
-
-```bash
-git remote set-url origin https://github.com/eguihaire/transcription-live.git
-git push -u origin main
-```
-
-> Remarque: dans certains environnements d'entreprise/proxy, l'accès GitHub peut être bloqué. Dans ce cas, exécutez simplement les commandes ci-dessus depuis votre machine locale.
+- Le protocole de messages ElevenLabs peut évoluer; adaptez l'extraction de texte si nécessaire.
