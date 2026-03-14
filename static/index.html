@@ -46,8 +46,9 @@
 
     let recorder;
     let mediaStream;
-    let ws;
     let running = false;
+    let queue = [];
+    let inFlight = false;
     let transcript = '';
 
     function setStatus(text) { statusEl.textContent = text; }
@@ -63,69 +64,53 @@
       return btoa(binary);
     }
 
-    function appendTranscript(text) {
-      if (!text) return;
-      transcript += (transcript ? ' ' : '') + text;
-      out.textContent = transcript;
-      out.scrollTop = out.scrollHeight;
+    async function sendChunk(blob) {
+      const body = {
+        audio_b64: await blobToBase64(blob),
+        language: 'fr',
+        mime_type: blob.type || 'audio/webm'
+      };
+
+      const res = await fetch('/transcribe-chunk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error((data && data.error) ? data.error : 'Erreur transcription');
+      }
+
+      const text = (data.text || '').trim();
+      if (text) {
+        transcript += (transcript ? ' ' : '') + text;
+        out.textContent = transcript;
+        out.scrollTop = out.scrollHeight;
+      }
     }
 
-    async function connectRealtime() {
-      const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-      const url = `${protocol}://${location.host}/ws/transcribe`;
-
-      ws = new WebSocket(url);
-
-      ws.onopen = () => {
-        setStatus('Transcription en direct...');
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.text) {
-            appendTranscript(data.text.trim());
-          }
-          if (data.error) {
-            console.error('STT error:', data.error);
-            setStatus('Erreur de transcription');
-          }
-        } catch (error) {
-          console.error('WS parse error:', error);
+    async function flushQueue() {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        while (queue.length) {
+          const blob = queue.shift();
+          await sendChunk(blob);
         }
-      };
-
-      ws.onerror = (error) => {
-        console.error('WS error:', error);
-        setStatus('Erreur de connexion');
-      };
-
-      ws.onclose = () => {
-        if (running) {
-          setStatus('Connexion interrompue');
-          stop();
-        }
-      };
-
-      await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('Connexion timeout')), 8000);
-        ws.addEventListener('open', () => {
-          clearTimeout(timeout);
-          resolve();
-        }, { once: true });
-        ws.addEventListener('error', () => {
-          clearTimeout(timeout);
-          reject(new Error('Connexion impossible'));
-        }, { once: true });
-      });
+      } catch (error) {
+        console.error('Transcription error:', error);
+        setStatus('Erreur de transcription');
+      } finally {
+        inFlight = false;
+      }
     }
 
     async function start() {
       transcript = '';
       out.textContent = '';
+      queue = [];
       setStatus('Sélection de l\'onglet...');
-
-      await connectRealtime();
 
       mediaStream = await navigator.mediaDevices.getDisplayMedia({
         video: true,
@@ -143,27 +128,15 @@
         : 'audio/webm';
 
       recorder = new MediaRecorder(audioOnly, { mimeType });
-      recorder.ondataavailable = async (e) => {
-        if (!running || !ws || ws.readyState !== WebSocket.OPEN || !e.data || e.data.size === 0) {
-          return;
-        }
-
-        try {
-          const audio_b64 = await blobToBase64(e.data);
-          ws.send(JSON.stringify({
-            type: 'audio_chunk',
-            audio_b64,
-            mime_type: e.data.type || mimeType,
-            language: 'fr'
-          }));
-        } catch (error) {
-          console.error('Chunk send error:', error);
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          queue.push(event.data);
+          flushQueue();
         }
       };
-
       recorder.onstop = () => setStatus('Arrêté');
 
-      recorder.start(300);
+      recorder.start(350);
       running = true;
       startBtn.disabled = true;
       stopBtn.disabled = false;
@@ -177,16 +150,10 @@
       running = false;
       recorder?.stop();
       mediaStream?.getTracks().forEach(t => t.stop());
-
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'stop' }));
-        ws.close();
-      }
-
-      ws = null;
       startBtn.disabled = false;
       stopBtn.disabled = true;
-      setStatus('Terminé');
+      setStatus('Finalisation...');
+      flushQueue().finally(() => setStatus('Terminé'));
     }
 
     startBtn.addEventListener('click', async () => {
@@ -195,7 +162,6 @@
       } catch (error) {
         console.error('Start error:', error);
         setStatus('Erreur');
-        stop();
       }
     });
 
