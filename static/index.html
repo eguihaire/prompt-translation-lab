@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Live Transcription (onglet Chrome)</title>
+  <title>Super Scribe V1</title>
   <style>
     body { font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; max-width: 880px; }
     h1 { font-size: 22px; margin-bottom: 8px; }
@@ -24,21 +24,19 @@
       line-height: 1.45;
       background: #fff;
     }
-    .hint { font-size: 12px; color: #64748b; }
   </style>
 </head>
 <body>
-  <h1>Transcription live d'un onglet Chrome</h1>
-  <p>Ultra-simple : clique <strong>Démarrer</strong>, choisis <strong>un onglet Chrome</strong> et active <strong>Partager l'audio</strong>.</p>
+  <h1>Super Scribe V1</h1>
+  <p>Clique <strong>Start</strong>, choisis <strong>un onglet Chrome</strong> et active <strong>Partager l'audio</strong>.</p>
 
   <div class="row">
-    <button id="start">Démarrer</button>
-    <button id="stop" disabled>Arrêter</button>
+    <button id="start">Start</button>
+    <button id="stop" disabled>Stop</button>
     <span id="status">En attente</span>
   </div>
 
   <div id="out" aria-live="polite"></div>
-  <p class="hint">La clé OpenAI reste côté serveur (env Vercel: <code>OPENAI_API_KEY</code>).</p>
 
   <script>
     const startBtn = document.getElementById('start');
@@ -69,7 +67,6 @@
     async function sendChunk(blob) {
       const body = {
         audio_b64: await blobToBase64(blob),
-        previous_text: transcript.slice(-500),
         language: 'fr',
         mime_type: blob.type || 'audio/webm'
       };
@@ -79,8 +76,11 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       });
+
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Erreur transcription');
+      if (!res.ok) {
+        throw new Error((data && data.error) ? data.error : 'Erreur transcription');
+      }
 
       const text = (data.text || '').trim();
       if (text) {
@@ -98,8 +98,9 @@
           const blob = queue.shift();
           await sendChunk(blob);
         }
-      } catch (e) {
-        setStatus('Erreur: ' + e.message);
+      } catch (error) {
+        console.error('Transcription error:', error);
+        setStatus('Erreur de transcription');
       } finally {
         inFlight = false;
       }
@@ -118,7 +119,7 @@
 
       const audioTracks = mediaStream.getAudioTracks();
       if (!audioTracks.length) {
-        throw new Error('Aucune piste audio détectée. Coche "Partager l\'audio".');
+        throw new Error('Aucune piste audio détectée.');
       }
 
       const audioOnly = new MediaStream([audioTracks[0]]);
@@ -127,15 +128,15 @@
         : 'audio/webm';
 
       recorder = new MediaRecorder(audioOnly, { mimeType });
-      recorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) {
-          queue.push(e.data);
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          queue.push(event.data);
           flushQueue();
         }
       };
       recorder.onstop = () => setStatus('Arrêté');
 
-      recorder.start(1200);
+      recorder.start(350);
       running = true;
       startBtn.disabled = true;
       stopBtn.disabled = false;
@@ -156,8 +157,14 @@
     }
 
     startBtn.addEventListener('click', async () => {
-      try { await start(); } catch (e) { setStatus('Erreur: ' + e.message); }
+      try {
+        await start();
+      } catch (error) {
+        console.error('Start error:', error);
+        setStatus('Erreur');
+      }
     });
+
     stopBtn.addEventListener('click', stop);
   </script>
 </body>
